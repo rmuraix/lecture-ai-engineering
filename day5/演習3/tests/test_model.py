@@ -1,16 +1,17 @@
 import os
-import pytest
-import pandas as pd
-import numpy as np
 import pickle
 import time
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+import numpy as np
+import pandas as pd
+import pytest
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 # テスト用データとモデルパスを定義
 DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/Titanic.csv")
@@ -171,3 +172,77 @@ def test_model_reproducibility(sample_data, preprocessor):
     assert np.array_equal(
         predictions1, predictions2
     ), "モデルの予測結果に再現性がありません"
+
+
+def test_preprocessing_output_shape(sample_data, preprocessor):
+    """前処理後のデータ形状の確認"""
+    X = sample_data.drop("Survived", axis=1)
+    preprocessor.fit(X)
+    transformed = preprocessor.transform(X)
+    assert transformed.shape[0] == X.shape[0], "前処理後の行数が一致しません"
+
+
+def test_model_with_missing_values(train_model, sample_data):
+    """欠損値を含むデータに対するモデル推論テスト"""
+    model, _, _ = train_model
+    test_data = sample_data.drop("Survived", axis=1).iloc[:5].copy()
+    test_data.iloc[0, 0] = np.nan  # 最初の行の最初の列に欠損値を導入
+
+    try:
+        _ = model.predict(test_data)
+    except Exception as e:
+        pytest.fail(f"欠損値を含むデータで推論中にエラーが発生: {e}")
+
+
+def test_model_loading():
+    """保存されたモデルが正しく読み込めるか"""
+    if not os.path.exists(MODEL_PATH):
+        pytest.skip("モデルファイルが存在しないためスキップします")
+
+    try:
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        assert hasattr(
+            model, "predict"
+        ), "読み込んだモデルがpredictメソッドを持っていません"
+    except Exception as e:
+        pytest.fail(f"モデルの読み込みに失敗しました: {e}")
+
+
+def test_model_with_invalid_input(train_model):
+    """無効な入力に対するモデルの挙動を確認"""
+    model, _, _ = train_model
+    invalid_input = pd.DataFrame(
+        {
+            "Pclass": ["a"],
+            "Sex": ["male"],
+            "Age": ["?"],
+            "SibSp": [0],
+            "Parch": [0],
+            "Fare": [7.25],
+            "Embarked": ["S"],
+        }
+    )
+
+    with pytest.raises(Exception):
+        model.predict(invalid_input)
+
+
+def test_model_with_empty_input(train_model):
+    """空の入力に対するエラーハンドリング"""
+    model, _, _ = train_model
+    empty_input = pd.DataFrame(
+        columns=["Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "Embarked"]
+    )
+
+    with pytest.raises(ValueError):
+        model.predict(empty_input)
+
+
+def test_model_prediction_labels(train_model):
+    """予測ラベルが想定範囲内であることの検証"""
+    model, X_test, _ = train_model
+    predictions = model.predict(X_test)
+    assert set(predictions).issubset(
+        {0, 1}
+    ), f"予測値が0/1以外を含んでいます: {set(predictions)}"
